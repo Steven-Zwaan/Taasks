@@ -147,4 +147,14 @@ export default defineNuxtConfig({
     cssPath: '~/assets/css/main.css',
     exposeConfig: false,
   },
+
+  // Vite configuration for CJS module compatibility
+  vite: {
+    optimizeDeps: {
+      include: ['dexie'],
+    },
+    ssr: {
+      noExternal: ['dexie'],
+    },
+  },
 })
