@@ -22,10 +22,10 @@ export default defineEventHandler(async (event) => {
     syncStatus: 'synced',
   }
 
-  const savedTodo = upsertTodo(todo)
+  const result = await upsertTodo(todo)
 
   return {
-    todo: savedTodo,
+    todo: result.todo,
     timestamp: new Date().toISOString(),
   }
 })

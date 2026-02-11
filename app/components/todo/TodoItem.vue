@@ -47,13 +47,6 @@
       </p>
     </div>
 
-    <!-- Sync indicator -->
-    <div v-if="todo.syncStatus === 'pending'" class="ml-2">
-      <svg class="w-4 h-4 text-yellow-500 animate-pulse" fill="currentColor" viewBox="0 0 24 24">
-        <circle cx="12" cy="12" r="4" />
-      </svg>
-    </div>
-
     <!-- Actions trigger -->
     <button
       @click.stop="showActions = true"

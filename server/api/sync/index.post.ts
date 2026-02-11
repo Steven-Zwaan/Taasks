@@ -8,10 +8,10 @@ interface SyncRequest {
 /**
  * POST /api/sync - Sync todos between client and server
  * 
- * Implements last-write-wins conflict resolution:
- * - Client sends local changes
- * - Server returns changes since lastSyncAt
- * - Both sides merge with version comparison
+ * Implements timestamp-based conflict resolution:
+ * - Newest updatedAt wins regardless of source
+ * - Client sends local changes with original timestamps
+ * - Server compares timestamps and returns conflicts
  */
 export default defineEventHandler(async (event) => {
   const user = await requireAuth(event)
@@ -19,30 +19,37 @@ export default defineEventHandler(async (event) => {
 
   const { lastSyncAt, changes = [] } = body
 
-  // Process incoming changes from client
-  const processedChanges: Todo[] = []
-  for (const todo of changes) {
-    // Ensure ownership
-    if (todo.userId !== user.sub) {
-      continue
+  // Separate regular changes from deletes
+  const deletions = changes.filter(todo => todo.syncStatus === 'deleted')
+  const upserts = changes.filter(todo => todo.syncStatus !== 'deleted')
+
+  // Process upserts with timestamp-based conflict resolution
+  const upsertResults = await bulkUpsertTodos(
+    upserts.filter(todo => todo.userId === user.sub)
+  )
+
+  // Process deletions
+  for (const todo of deletions) {
+    if (todo.userId === user.sub) {
+      await deleteTodo(todo.id, user.sub, todo.updatedAt)
     }
-    
-    const saved = bulkUpsertTodos([todo])
-    processedChanges.push(...saved)
   }
 
   // Get server changes since last sync
+  // These are todos that were modified on server that client needs
   const serverChanges = lastSyncAt
-    ? getTodosModifiedAfter(user.sub, lastSyncAt)
-    : getTodosModifiedAfter(user.sub, '1970-01-01T00:00:00.000Z')
+    ? await getTodosModifiedAfter(user.sub, lastSyncAt)
+    : await getTodosModifiedAfter(user.sub, '1970-01-01T00:00:00.000Z')
 
   const timestamp = new Date().toISOString()
 
   return {
     // Server changes for client to merge
     serverChanges,
-    // Processed client changes (with updated versions)
-    processedChanges,
+    // Todos that were successfully synced to DB
+    processedChanges: upsertResults.updated,
+    // Todos where server had newer data - client should update with these
+    conflicts: upsertResults.conflicts,
     // New sync timestamp
     syncTimestamp: timestamp,
   }

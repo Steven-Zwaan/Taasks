@@ -102,8 +102,87 @@ export default defineNuxtConfig({
     },
     workbox: {
       navigateFallback: '/',
-      globPatterns: ['**/*.{js,css,html,png,svg,ico,woff2}'],
+      navigateFallbackDenylist: [/^\/api\//],
+      // Pre-cache all static assets including icons
+      globPatterns: ['**/*.{js,css,html,png,svg,ico,woff,woff2,ttf,eot,webp,jpg,jpeg,gif}'],
+      // Runtime caching strategies
       runtimeCaching: [
+        // Cache static assets with CacheFirst (icons, images, fonts)
+        {
+          urlPattern: /\.(?:png|svg|ico|jpg|jpeg|gif|webp|woff|woff2|ttf|eot)$/i,
+          handler: 'CacheFirst',
+          options: {
+            cacheName: 'static-assets',
+            expiration: {
+              maxEntries: 100,
+              maxAgeSeconds: 60 * 60 * 24 * 365, // 1 year
+            },
+            cacheableResponse: {
+              statuses: [0, 200],
+            },
+          },
+        },
+        // Cache favicon specifically
+        {
+          urlPattern: /favicon\.ico$/,
+          handler: 'CacheFirst',
+          options: {
+            cacheName: 'favicon-cache',
+            expiration: {
+              maxEntries: 1,
+              maxAgeSeconds: 60 * 60 * 24 * 365, // 1 year
+            },
+            cacheableResponse: {
+              statuses: [0, 200],
+            },
+          },
+        },
+        // Cache apple touch icons
+        {
+          urlPattern: /apple-touch-icon.*\.png$/,
+          handler: 'CacheFirst',
+          options: {
+            cacheName: 'apple-icons',
+            expiration: {
+              maxEntries: 10,
+              maxAgeSeconds: 60 * 60 * 24 * 365, // 1 year
+            },
+            cacheableResponse: {
+              statuses: [0, 200],
+            },
+          },
+        },
+        // Cache splash screens
+        {
+          urlPattern: /\/splash\/.*\.png$/,
+          handler: 'CacheFirst',
+          options: {
+            cacheName: 'splash-screens',
+            expiration: {
+              maxEntries: 20,
+              maxAgeSeconds: 60 * 60 * 24 * 365, // 1 year
+            },
+            cacheableResponse: {
+              statuses: [0, 200],
+            },
+          },
+        },
+        // Cache CSS/JS with StaleWhileRevalidate
+        {
+          urlPattern: /\.(?:js|css)$/i,
+          handler: 'StaleWhileRevalidate',
+          options: {
+            cacheName: 'static-resources',
+            expiration: {
+              maxEntries: 50,
+              maxAgeSeconds: 60 * 60 * 24 * 30, // 30 days
+            },
+            cacheableResponse: {
+              statuses: [0, 200],
+            },
+          },
+        },
+        // Auth0 - NetworkFirst with fallback
         {
           urlPattern: /^https:\/\/.*\.auth0\.com\/.*/i,
           handler: 'NetworkFirst',
@@ -113,8 +192,13 @@ export default defineNuxtConfig({
               maxEntries: 10,
               maxAgeSeconds: 60 * 60 * 24, // 1 day
             },
+            networkTimeoutSeconds: 10,
+            cacheableResponse: {
+              statuses: [0, 200],
+            },
           },
         },
+        // API - NetworkFirst with short timeout for offline
         {
           urlPattern: /\/api\/.*/i,
           handler: 'NetworkFirst',
@@ -124,10 +208,32 @@ export default defineNuxtConfig({
               maxEntries: 100,
               maxAgeSeconds: 60 * 60 * 24 * 7, // 1 week
             },
-            networkTimeoutSeconds: 10,
+            networkTimeoutSeconds: 5,
+            cacheableResponse: {
+              statuses: [0, 200],
+            },
+          },
+        },
+        // Google Fonts
+        {
+          urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,
+          handler: 'CacheFirst',
+          options: {
+            cacheName: 'google-fonts',
+            expiration: {
+              maxEntries: 30,
+              maxAgeSeconds: 60 * 60 * 24 * 365, // 1 year
+            },
+            cacheableResponse: {
+              statuses: [0, 200],
+            },
           },
         },
       ],
+      // Ensure app shell works offline
+      cleanupOutdatedCaches: true,
+      skipWaiting: true,
+      clientsClaim: true,
     },
     client: {
       installPrompt: true,

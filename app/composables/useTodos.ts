@@ -6,9 +6,11 @@ import { processRollover } from '~/utils/rollover'
 
 /**
  * Composable for todo CRUD operations with offline-first support
+ * Triggers immediate sync after each action
  */
 export function useTodos() {
   const { user } = useAuth()
+  const { syncImmediate, isOnline } = useOfflineSync()
   const userId = computed(() => user.value?.id ?? '')
 
   // Reactive state
@@ -157,6 +159,11 @@ export function useTodos() {
       retryCount: 0,
     })
 
+    // Trigger immediate sync
+    if (isOnline.value) {
+      syncImmediate()
+    }
+
     return todo
   }
 
@@ -191,6 +198,11 @@ export function useTodos() {
       timestamp,
       retryCount: 0,
     })
+
+    // Trigger immediate sync
+    if (isOnline.value) {
+      syncImmediate()
+    }
 
     return { ...existing, ...updates } as Todo
   }
@@ -231,6 +243,11 @@ export function useTodos() {
       timestamp,
       retryCount: 0,
     })
+
+    // Trigger immediate sync
+    if (isOnline.value) {
+      syncImmediate()
+    }
 
     return true
   }
@@ -289,6 +306,11 @@ export function useTodos() {
         })
       }
     })
+
+    // Trigger immediate sync
+    if (isOnline.value) {
+      syncImmediate()
+    }
   }
 
   /**

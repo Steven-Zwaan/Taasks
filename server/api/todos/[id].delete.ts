@@ -12,7 +12,7 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const existing = getTodoById(id)
+  const existing = await getTodoById(id)
 
   // Idempotent: return success even if not found
   if (!existing) {
@@ -30,7 +30,7 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  deleteTodo(id)
+  await deleteTodo(id, user.sub)
 
   return {
     success: true,

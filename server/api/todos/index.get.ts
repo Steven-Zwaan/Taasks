@@ -3,7 +3,7 @@
  */
 export default defineEventHandler(async (event) => {
   const user = await requireAuth(event)
-  const todos = getTodosByUserId(user.sub)
+  const todos = await getTodosByUserId(user.sub)
   
   return {
     todos,

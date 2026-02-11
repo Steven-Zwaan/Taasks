@@ -87,10 +87,11 @@
             <div>
               <p class="font-medium">Sync Status</p>
               <p class="text-sm text-gray-500">
-                <template v-if="syncState === 'idle'">All changes synced</template>
+                <template v-if="syncState === 'idle'">Everything is synced</template>
                 <template v-else-if="syncState === 'syncing'">Syncing...</template>
-                <template v-else-if="syncState === 'offline'">Offline</template>
-                <template v-else-if="syncState === 'error'">Sync error</template>
+                <template v-else-if="syncState === 'offline'">Offline - changes saved locally</template>
+                <template v-else-if="syncState === 'error'">Sync error - retrying automatically</template>
+                <template v-else-if="syncState === 'pending'">Changes pending sync</template>
               </p>
             </div>
             <div class="flex items-center gap-2">
@@ -98,7 +99,7 @@
                 class="w-3 h-3 rounded-full"
                 :class="{
                   'bg-green-500': syncState === 'idle',
-                  'bg-yellow-500 animate-pulse': syncState === 'syncing',
+                  'bg-blue-500 animate-pulse': syncState === 'syncing' || syncState === 'pending',
                   'bg-gray-400': syncState === 'offline',
                   'bg-red-500': syncState === 'error',
                 }"

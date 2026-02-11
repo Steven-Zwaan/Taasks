@@ -15,7 +15,7 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const existing = getTodoById(id)
+  const existing = await getTodoById(id)
 
   // Allow creating if doesn't exist (idempotent)
   if (!existing) {
@@ -42,8 +42,8 @@ export default defineEventHandler(async (event) => {
       sortOrder: body.sortOrder ?? 0,
     }
 
-    const savedTodo = upsertTodo(newTodo)
-    return { todo: savedTodo, timestamp: new Date().toISOString() }
+    const result = await upsertTodo(newTodo)
+    return { todo: result.todo, timestamp: new Date().toISOString() }
   }
 
   // Verify ownership
@@ -61,10 +61,10 @@ export default defineEventHandler(async (event) => {
     userId: user.sub, // Preserve ownership
   }
 
-  const savedTodo = upsertTodo(updatedTodo)
+  const result = await upsertTodo(updatedTodo)
 
   return {
-    todo: savedTodo,
+    todo: result.todo,
     timestamp: new Date().toISOString(),
   }
 })
