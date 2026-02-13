@@ -91,6 +91,15 @@
           >
             Cancel
           </button>
+
+          <!-- Delete (edit mode only) -->
+          <button
+            v-if="editingTodo"
+            @click="handleDelete"
+            class="w-full mt-2 py-3 text-center text-red-500 font-medium border border-red-200 rounded-xl hover:bg-red-50 active:bg-red-100 transition-colors"
+          >
+            {{ confirmingDelete ? 'Tap again to delete' : 'Delete Todo' }}
+          </button>
         </div>
       </div>
     </Transition>
@@ -114,13 +123,14 @@ const emit = defineEmits<{
   submit: [data: { title: string; scope: TodoScope; dueDate?: string; color: TodoColor }]
 }>()
 
-const { createTodo, updateTodo } = useTodos()
+const { createTodo, updateTodo, deleteTodo } = useTodos()
 
 const titleInput = ref<HTMLInputElement>()
 const title = ref('')
 const scope = ref<TodoScope>('day')
 const dueDate = ref('')
 const color = ref<TodoColor>('blue')
+const confirmingDelete = ref(false)
 
 const today = getToday()
 const colors: TodoColor[] = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'gray']
@@ -128,6 +138,7 @@ const colors: TodoColor[] = ['red', 'orange', 'yellow', 'green', 'blue', 'purple
 // Reset form when opening
 watch(() => props.isOpen, (isOpen) => {
   if (isOpen) {
+    confirmingDelete.value = false
     if (props.editingTodo) {
       title.value = props.editingTodo.title
       scope.value = props.editingTodo.scope
@@ -166,6 +177,22 @@ async function handleSubmit() {
     })
   }
 
+  emit('close')
+}
+
+async function handleDelete() {
+  if (!props.editingTodo) return
+
+  if (!confirmingDelete.value) {
+    confirmingDelete.value = true
+    // Reset after 3 seconds if not confirmed
+    setTimeout(() => {
+      confirmingDelete.value = false
+    }, 3000)
+    return
+  }
+
+  await deleteTodo(props.editingTodo.id)
   emit('close')
 }
 </script>

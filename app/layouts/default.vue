@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-white flex flex-col">
+  <div class="h-[100dvh] bg-white flex flex-col overflow-hidden">
     <!-- Sync Status Banner -->
     <SyncStatusBanner />
 

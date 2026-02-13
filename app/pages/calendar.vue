@@ -12,10 +12,8 @@
           </NuxtLink>
         </div>
         <div class="flex items-center gap-2">
-          <button class="p-2 rounded-full hover:bg-gray-100">
-            <svg class="w-6 h-6 text-red-500" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M3 4h18v2H3V4zm0 7h12v2H3v-2zm0 7h18v2H3v-2z" />
-            </svg>
+          <button @click="scrollToToday" class="px-3 py-1 text-sm text-red-500 font-medium rounded-full hover:bg-gray-100">
+            Now
           </button>
           <button @click="showSearch = !showSearch" class="p-2 rounded-full hover:bg-gray-100">
             <svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -43,9 +41,18 @@
     </header>
 
     <!-- Content -->
-    <div class="flex-1 overflow-y-auto scroll-smooth-ios overscroll-none pb-20">
+    <div ref="scrollContainer" class="flex-1 overflow-y-auto scroll-smooth-ios overscroll-none pb-20" @scroll="onScroll">
+      <!-- Loading older indicator -->
+      <div v-if="loadingOlder" class="flex items-center justify-center py-3 text-gray-400">
+        <svg class="w-5 h-5 animate-spin mr-2" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+        <span class="text-sm">Loading earlier dates...</span>
+      </div>
+
       <!-- Empty state -->
-      <div v-if="sortedDates.length === 0" class="flex flex-col items-center justify-center h-full text-gray-400 px-8">
+      <div v-if="allDates.length === 0" class="flex flex-col items-center justify-center h-full text-gray-400 px-8">
         <svg class="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
         </svg>
@@ -55,9 +62,10 @@
 
       <!-- Apple Calendar-style list view -->
       <div v-else>
-        <template v-for="date in sortedDates" :key="date">
+        <template v-for="date in allDates" :key="date">
           <!-- Date header -->
           <div
+            :ref="el => { if (date === today) todayEl = el as HTMLElement }"
             class="date-header"
             :class="{ 'text-red-500': isToday(date) }"
           >
@@ -65,13 +73,29 @@
           </div>
 
           <!-- Todos for this date -->
-          <TodoItem
-            v-for="todo in filteredGroupedTodos.get(date)"
-            :key="todo.id"
-            :todo="todo"
-            @edit="openEditForm"
-          />
+          <template v-if="filteredGroupedTodos.has(date)">
+            <TodoItem
+              v-for="todo in filteredGroupedTodos.get(date)"
+              :key="todo.id"
+              :todo="todo"
+              @edit="openEditForm"
+            />
+          </template>
+
+          <!-- Empty date placeholder -->
+          <div v-else class="px-4 py-3 text-sm text-gray-300 italic">
+            No todos
+          </div>
         </template>
+      </div>
+
+      <!-- Loading newer indicator -->
+      <div v-if="loadingNewer" class="flex items-center justify-center py-3 text-gray-400">
+        <svg class="w-5 h-5 animate-spin mr-2" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+        <span class="text-sm">Loading more dates...</span>
       </div>
     </div>
 
@@ -87,16 +111,22 @@
 </template>
 
 <script setup lang="ts">
-import { useObservable } from '@vueuse/rxjs'
+import { liveQuery } from 'dexie'
+import type { Subscription } from 'rxjs'
 import type { Todo } from '#shared/types'
-import { today as getToday, formatDate } from '~/utils/db'
+import { db, today as getToday, formatDate, addDays, generateDateRange } from '~/utils/db'
 
 definePageMeta({
   layout: 'default',
   middleware: ['auth'],
 })
 
-const { createGroupedTodosQuery } = useTodos()
+const PAGE_SIZE = 14
+const MAX_RANGE_DAYS = 180 // cap to prevent unbounded DOM growth
+const SCROLL_THRESHOLD = 200 // pixels from edge to trigger loading
+
+const { user } = useAuth()
+const userId = computed(() => user.value?.id ?? '')
 
 const today = getToday()
 const showSearch = ref(false)
@@ -104,33 +134,88 @@ const searchQuery = ref('')
 const showForm = ref(false)
 const editingTodo = ref<Todo | null>(null)
 const selectedDate = ref(today)
+const loadingOlder = ref(false)
+const loadingNewer = ref(false)
+const initialized = ref(false)
 
-// Live query for grouped todos
-const groupedTodosObservable = createGroupedTodosQuery()
-const groupedTodos = useObservable(groupedTodosObservable, { initialValue: new Map() })
+// Date range: start at today, future dates below, past dates loaded on scroll-up
+const rangeStart = ref(today)
+const rangeEnd = ref(addDays(today, PAGE_SIZE))
 
-// Filter todos based on search
+// Refs for scroll management
+const scrollContainer = ref<HTMLElement | null>(null)
+const todayEl = ref<HTMLElement | null>(null)
+
+// Reactive grouped todos — manually managed subscription so we can
+// re-subscribe when the date range changes (Dexie liveQuery doesn't
+// react to Vue ref changes, only to IndexedDB data changes).
+const groupedTodos = ref<Map<string, Todo[]>>(new Map())
+let todosSubscription: Subscription | null = null
+
+function subscribeTodos() {
+  todosSubscription?.unsubscribe()
+  const start = rangeStart.value
+  const end = rangeEnd.value
+  const uid = userId.value
+  if (!uid) return
+
+  const obs = liveQuery(async () => {
+    const todos = await db.todos
+      .where('[userId+dueDate]')
+      .between([uid, start], [uid, end], true, true)
+      .filter(todo => todo.syncStatus !== 'deleted' && todo.scope === 'day')
+      .toArray()
+
+    const grouped = new Map<string, Todo[]>()
+    for (const todo of todos) {
+      if (!todo.dueDate) continue
+      const existing = grouped.get(todo.dueDate) ?? []
+      existing.push(todo)
+      grouped.set(todo.dueDate, existing)
+    }
+    for (const [, dateTodos] of grouped) {
+      dateTodos.sort((a, b) => a.sortOrder - b.sortOrder)
+    }
+    return grouped
+  })
+
+  todosSubscription = obs.subscribe({
+    next: (val) => { groupedTodos.value = val },
+    error: (err) => { console.error('Calendar query error:', err) },
+  })
+}
+
+// Re-subscribe whenever range or user changes
+watch([rangeStart, rangeEnd, userId], () => subscribeTodos(), { immediate: true })
+onUnmounted(() => todosSubscription?.unsubscribe())
+
+// Generate all dates in the visible range
+const allDates = computed(() => {
+  return generateDateRange(rangeStart.value, rangeEnd.value)
+})
+
+// Filter todos by search query
 const filteredGroupedTodos = computed(() => {
-  if (!searchQuery.value.trim()) return groupedTodos.value
-
-  const query = searchQuery.value.toLowerCase()
+  const query = searchQuery.value.trim().toLowerCase()
   const filtered = new Map<string, Todo[]>()
 
-  for (const [date, todos] of groupedTodos.value) {
-    const matchingTodos = todos.filter((todo: Todo) =>
-      todo.title.toLowerCase().includes(query)
-    )
-    if (matchingTodos.length > 0) {
-      filtered.set(date, matchingTodos)
+  for (const date of allDates.value) {
+    const todos = groupedTodos.value.get(date)
+    if (!todos || todos.length === 0) continue
+
+    if (query) {
+      const matchingTodos = todos.filter((todo: Todo) =>
+        todo.title.toLowerCase().includes(query)
+      )
+      if (matchingTodos.length > 0) {
+        filtered.set(date, matchingTodos)
+      }
+    } else {
+      filtered.set(date, todos)
     }
   }
 
   return filtered
-})
-
-// Sorted dates (chronological)
-const sortedDates = computed(() => {
-  return Array.from(filteredGroupedTodos.value.keys()).sort()
 })
 
 function isToday(date: string): boolean {
@@ -140,6 +225,89 @@ function isToday(date: string): boolean {
 function formatDateHeader(date: string): string {
   return formatDate(date)
 }
+
+function scrollToToday() {
+  // If today is outside the current range, reset to initial view
+  if (today < rangeStart.value || today > rangeEnd.value) {
+    rangeStart.value = today
+    rangeEnd.value = addDays(today, PAGE_SIZE)
+    nextTick(() => {
+      if (scrollContainer.value) scrollContainer.value.scrollTop = 0
+    })
+    return
+  }
+  if (todayEl.value) {
+    todayEl.value.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+}
+
+// Scroll event handler
+function onScroll() {
+  if (!initialized.value) return
+  const container = scrollContainer.value
+  if (!container) return
+
+  // Near the top → load older dates
+  if (container.scrollTop < SCROLL_THRESHOLD && !loadingOlder.value) {
+    loadOlderDates()
+  }
+
+  // Near the bottom → load newer dates
+  const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+  if (distanceFromBottom < SCROLL_THRESHOLD && !loadingNewer.value) {
+    loadNewerDates()
+  }
+}
+
+// Calculate days between two date strings
+function daysBetween(a: string, b: string): number {
+  const msPerDay = 86400000
+  return Math.round(
+    (new Date(b + 'T00:00:00').getTime() - new Date(a + 'T00:00:00').getTime()) / msPerDay
+  )
+}
+
+async function loadOlderDates() {
+  // Cap: don't go more than MAX_RANGE_DAYS before today
+  if (daysBetween(rangeStart.value, today) >= MAX_RANGE_DAYS) return
+
+  loadingOlder.value = true
+
+  const container = scrollContainer.value
+  const previousHeight = container?.scrollHeight ?? 0
+
+  rangeStart.value = addDays(rangeStart.value, -PAGE_SIZE)
+
+  await nextTick()
+  await nextTick()
+
+  // Restore scroll position so content doesn't jump when prepending dates
+  if (container) {
+    const newHeight = container.scrollHeight
+    container.scrollTop += (newHeight - previousHeight)
+  }
+
+  setTimeout(() => { loadingOlder.value = false }, 500)
+}
+
+async function loadNewerDates() {
+  // Cap: don't go more than MAX_RANGE_DAYS after today
+  if (daysBetween(today, rangeEnd.value) >= MAX_RANGE_DAYS) return
+
+  loadingNewer.value = true
+  rangeEnd.value = addDays(rangeEnd.value, PAGE_SIZE)
+  await nextTick()
+  setTimeout(() => { loadingNewer.value = false }, 500)
+}
+
+onMounted(() => {
+  // Today is already at the top (rangeStart = today), so no scrollIntoView needed.
+  // Just delay enabling pagination so the initial render at scrollTop=0 doesn't
+  // immediately trigger loadOlderDates.
+  nextTick(() => {
+    setTimeout(() => { initialized.value = true }, 500)
+  })
+})
 
 function openAddForm(_event?: Event, date?: string) {
   editingTodo.value = null

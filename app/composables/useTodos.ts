@@ -1,5 +1,6 @@
 import { liveQuery } from 'dexie'
 import { from, type Observable as RxObservable } from 'rxjs'
+import type { Ref } from 'vue'
 import type { Todo, CreateTodoInput, UpdateTodoInput, TodoScope } from '#shared/types'
 import { db, generateId, now, today } from '~/utils/db'
 import { processRollover } from '~/utils/rollover'
@@ -47,7 +48,53 @@ export function useTodos() {
   }
 
   /**
-   * Get todos grouped by date (for calendar view)
+   * Get todos grouped by date for a specific date range (for paginated calendar view)
+   * Returns RxJS Observable for compatibility with @vueuse/rxjs
+   */
+  function createDateRangeTodosQuery(
+    startDate: Ref<string>,
+    endDate: Ref<string>
+  ): RxObservable<Map<string, Todo[]>> {
+    const dexieObservable = liveQuery(async () => {
+      if (!userId.value) return new Map()
+
+      const todos = await db.todos
+        .where('[userId+dueDate]')
+        .between(
+          [userId.value, startDate.value],
+          [userId.value, endDate.value],
+          true, // include lower bound
+          true  // include upper bound
+        )
+        .filter(todo =>
+          todo.syncStatus !== 'deleted' &&
+          todo.scope === 'day'
+        )
+        .toArray()
+
+      // Group by date
+      const grouped = new Map<string, Todo[]>()
+
+      for (const todo of todos) {
+        if (!todo.dueDate) continue
+        const existing = grouped.get(todo.dueDate) ?? []
+        existing.push(todo)
+        grouped.set(todo.dueDate, existing)
+      }
+
+      // Sort todos within each group
+      for (const [date, dateTodos] of grouped) {
+        grouped.set(date, dateTodos.sort((a, b) => a.sortOrder - b.sortOrder))
+      }
+
+      return grouped
+    })
+
+    return from(dexieObservable)
+  }
+
+  /**
+   * Get todos grouped by date (for calendar view) — loads ALL todos
    * Returns RxJS Observable for compatibility with @vueuse/rxjs
    */
   function createGroupedTodosQuery(): RxObservable<Map<string, Todo[]>> {
@@ -345,6 +392,7 @@ export function useTodos() {
   return {
     // Queries
     createTodosQuery,
+    createDateRangeTodosQuery,
     createGroupedTodosQuery,
     createGlobalTodosQuery,
     getTodo,
