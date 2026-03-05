@@ -106,21 +106,21 @@ todo_app/
 
 ```typescript
 interface Todo {
-  id: string
-  title: string
-  completed: boolean
-  completedAt?: string
-  scope: 'day' | 'global'
-  dueDate?: string
-  color: TodoColor
-  rolloverRule: 'next-day' | 'next-week' | 'none'
-  rolloverFromId?: string
-  userId: string
-  createdAt: string
-  updatedAt: string
-  syncStatus: 'pending' | 'synced' | 'conflict' | 'deleted'
-  version: number
-  sortOrder: number
+    id: string;
+    title: string;
+    completed: boolean;
+    completedAt?: string;
+    scope: "day" | "global";
+    dueDate?: string;
+    color: TodoColor;
+    rolloverRule: "next-day" | "next-week" | "none";
+    rolloverFromId?: string;
+    userId: string;
+    createdAt: string;
+    updatedAt: string;
+    syncStatus: "pending" | "synced" | "conflict" | "deleted";
+    version: number;
+    sortOrder: number;
 }
 ```
 

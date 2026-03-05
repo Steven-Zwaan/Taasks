@@ -40,9 +40,9 @@
       </div>
     </header>
 
-    <!-- Content -->
-    <div ref="scrollContainer" class="flex-1 overflow-y-auto scroll-smooth-ios overscroll-none pb-20">
-      <!-- Top sentinel for loading older chunks -->
+    <!-- Scroll container -->
+    <div ref="scrollContainer" class="flex-1 overflow-y-auto overscroll-none pb-20">
+      <!-- Top sentinel -->
       <div ref="topSentinel" class="h-1" />
 
       <!-- Loading older indicator -->
@@ -54,19 +54,43 @@
         <span class="text-sm">Loading earlier dates...</span>
       </div>
 
-      <!-- Chunks -->
-      <CalendarChunk
-        v-for="chunk in chunks"
-        :key="chunk.id"
-        :ref="el => setChunkRef(chunk.id, el)"
-        :start-date="chunk.start"
-        :end-date="chunk.end"
-        :search-query="searchQuery"
-        @edit="openEditForm"
-      />
+      <!-- Day blocks -->
+      <template v-for="day in displayedDays" :key="day.date">
+        <!-- Non-sticky scroll anchor for today -->
+        <div v-if="day.isToday" :ref="el => { todayEl = el as HTMLElement }" class="h-0" />
 
-      <!-- Empty state (only shown when all chunks are loaded and truly empty) -->
-      <div v-if="chunks.length > 0 && !hasAnyContent" class="flex flex-col items-center justify-center py-20 text-gray-400 px-8">
+        <!-- Sticky day header -->
+        <div
+          class="date-header"
+          :class="{ 'text-red-500': day.isToday }"
+        >
+          <div class="flex items-center gap-2">
+            <span v-if="day.isToday" class="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+            <span>{{ day.label }}</span>
+            <span class="text-gray-400 ml-auto font-normal normal-case tracking-normal">{{ day.shortDate }}</span>
+          </div>
+        </div>
+
+        <!-- Day content -->
+        <div
+          class="px-4 py-2"
+          :class="{ 'bg-red-50/50': day.isToday }"
+        >
+          <TodoItem
+            v-for="todo in day.todos"
+            :key="todo.id"
+            :todo="todo"
+            @edit="openEditForm"
+          />
+
+          <p v-if="day.isToday && day.todos.length === 0" class="text-sm text-gray-400 py-2">
+            No todos for today
+          </p>
+        </div>
+      </template>
+
+      <!-- Empty state -->
+      <div v-if="displayedDays.length === 0 && !loadingOlder && !loadingNewer" class="flex flex-col items-center justify-center py-20 text-gray-400 px-8">
         <svg class="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
         </svg>
@@ -83,7 +107,7 @@
         <span class="text-sm">Loading more dates...</span>
       </div>
 
-      <!-- Bottom sentinel for loading newer chunks -->
+      <!-- Bottom sentinel -->
       <div ref="bottomSentinel" class="h-1" />
     </div>
 
@@ -99,29 +123,26 @@
 </template>
 
 <script setup lang="ts">
+import { liveQuery } from 'dexie'
 import type { Todo } from '#shared/types'
-import { today as getToday, addDays } from '~/utils/db'
+import { db, today as getToday, formatDate, addDays } from '~/utils/db'
 
 definePageMeta({
   layout: 'default',
   middleware: ['auth'],
 })
 
-const CHUNK_DAYS = 7
-const MAX_CHUNKS = 8
+const PAGE_SIZE = 10
 
-interface ChunkDescriptor {
-  id: string
-  start: string
-  end: string
-}
+const { user } = useAuth()
+const userId = computed(() => user.value?.id ?? '')
 
-const today = getToday()
+const todayStr = getToday()
 const showSearch = ref(false)
 const searchQuery = ref('')
 const showForm = ref(false)
 const editingTodo = ref<Todo | null>(null)
-const selectedDate = ref(today)
+const selectedDate = ref(todayStr)
 const loadingOlder = ref(false)
 const loadingNewer = ref(false)
 const initialized = ref(false)
@@ -130,199 +151,240 @@ const initialized = ref(false)
 const scrollContainer = ref<HTMLElement | null>(null)
 const topSentinel = ref<HTMLElement | null>(null)
 const bottomSentinel = ref<HTMLElement | null>(null)
+const todayEl = ref<HTMLElement | null>(null)
 
-// Track chunk component refs to find today element
-const chunkRefs = new Map<string, any>()
+// Day range tracking (offsets from today)
+const topOffset = ref(-PAGE_SIZE)
+const bottomOffset = ref(PAGE_SIZE)
 
-function setChunkRef(id: string, el: any) {
-  if (el) chunkRefs.set(id, el)
-  else chunkRefs.delete(id)
+// Computed date range
+const startDate = computed(() => addDays(todayStr, topOffset.value))
+const endDate = computed(() => addDays(todayStr, bottomOffset.value))
+
+// Reactive todo data from Dexie
+const groupedTodos = ref<Map<string, Todo[]>>(new Map())
+let subscription: { unsubscribe(): void } | null = null
+
+function subscribe() {
+  subscription?.unsubscribe()
+
+  const uid = userId.value
+  if (!uid) return
+
+  const start = startDate.value
+  const end = endDate.value
+
+  const obs = liveQuery(async () => {
+    const todos = await db.todos
+      .where('[userId+dueDate]')
+      .between([uid, start], [uid, end], true, true)
+      .filter(todo => todo.syncStatus !== 'deleted')
+      .toArray()
+
+    const grouped = new Map<string, Todo[]>()
+    for (const todo of todos) {
+      if (!todo.dueDate) continue
+      const existing = grouped.get(todo.dueDate) ?? []
+      existing.push(todo)
+      grouped.set(todo.dueDate, existing)
+    }
+    for (const [, dateTodos] of grouped) {
+      dateTodos.sort((a, b) => a.sortOrder - b.sortOrder)
+    }
+    return grouped
+  })
+
+  subscription = obs.subscribe({
+    next: (val) => { groupedTodos.value = val },
+    error: (err) => { console.error('Calendar query error:', err) },
+  })
 }
 
-// For the empty state — check if any chunk has content
-// This is a simple heuristic: we show the empty state only briefly on initial load
-const hasAnyContent = ref(true)
+// Displayed days: skip empty dates (except today), apply search filter
+const displayedDays = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase()
+  const days: Array<{
+    date: string
+    label: string
+    shortDate: string
+    isToday: boolean
+    isPast: boolean
+    todos: Todo[]
+  }> = []
 
-function createChunk(start: string, end: string): ChunkDescriptor {
-  return { id: `${start}_${end}`, start, end }
-}
+  const sortedDates = [...groupedTodos.value.keys()].sort()
 
-function buildInitialChunks(): ChunkDescriptor[] {
-  return [
-    createChunk(addDays(today, -CHUNK_DAYS), addDays(today, -1)),
-    createChunk(today, addDays(today, CHUNK_DAYS - 1)),
-    createChunk(addDays(today, CHUNK_DAYS), addDays(today, CHUNK_DAYS * 2 - 1)),
-  ]
-}
+  for (const date of sortedDates) {
+    let todos = groupedTodos.value.get(date) ?? []
 
-const chunks = ref<ChunkDescriptor[]>(buildInitialChunks())
+    if (query) {
+      todos = todos.filter(t => t.title.toLowerCase().includes(query))
+      if (todos.length === 0) continue
+    }
 
-// IntersectionObserver for infinite scroll
+    days.push({
+      date,
+      label: formatDate(date),
+      shortDate: new Date(date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      isToday: date === todayStr,
+      isPast: date < todayStr,
+      todos,
+    })
+  }
+
+  // Always include today even if it has no todos (unless searching)
+  if (!query && !days.find(d => d.isToday)) {
+    const todayEntry = {
+      date: todayStr,
+      label: 'Today',
+      shortDate: new Date(todayStr + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      isToday: true,
+      isPast: false,
+      todos: [] as Todo[],
+    }
+    const insertIdx = days.findIndex(d => d.date > todayStr)
+    if (insertIdx === -1) {
+      days.push(todayEntry)
+    } else {
+      days.splice(insertIdx, 0, todayEntry)
+    }
+  }
+
+  return days
+})
+
+// Scroll preservation for prepend
+let prevScrollHeight = 0
+let pendingScrollFix = false
+
+// Watch displayed days for scroll fix after prepend
+watch(displayedDays, () => {
+  if (pendingScrollFix) {
+    nextTick(() => {
+      const container = scrollContainer.value
+      if (container && prevScrollHeight) {
+        const newHeight = container.scrollHeight
+        container.scrollTop += (newHeight - prevScrollHeight)
+      }
+      prevScrollHeight = 0
+      pendingScrollFix = false
+      loadingOlder.value = false
+    })
+  }
+  if (loadingNewer.value) {
+    nextTick(() => { loadingNewer.value = false })
+  }
+}, { flush: 'post' })
+
+// IntersectionObservers
 let topObserver: IntersectionObserver | null = null
 let bottomObserver: IntersectionObserver | null = null
 
-function prependChunk() {
+function loadOlder() {
   if (loadingOlder.value) return
   loadingOlder.value = true
 
-  const first = chunks.value[0]!
-  const newEnd = addDays(first.start, -1)
-  const newStart = addDays(newEnd, -(CHUNK_DAYS - 1))
-
-  const container = scrollContainer.value
-  const prevHeight = container?.scrollHeight ?? 0
-
-  chunks.value.unshift(createChunk(newStart, newEnd))
-
-  // Prune from the other end if over max
-  if (chunks.value.length > MAX_CHUNKS) {
-    chunks.value.pop()
-  }
-
-  // Restore scroll position after prepending
-  nextTick(() => {
-    requestAnimationFrame(() => {
-      if (container) {
-        const newHeight = container.scrollHeight
-        container.scrollTop += (newHeight - prevHeight)
-      }
-      loadingOlder.value = false
-    })
-  })
+  prevScrollHeight = scrollContainer.value?.scrollHeight ?? 0
+  pendingScrollFix = true
+  topOffset.value -= PAGE_SIZE
 }
 
-function appendChunk() {
+function loadNewer() {
   if (loadingNewer.value) return
   loadingNewer.value = true
-
-  const last = chunks.value[chunks.value.length - 1]!
-  const newStart = addDays(last.end, 1)
-  const newEnd = addDays(newStart, CHUNK_DAYS - 1)
-
-  chunks.value.push(createChunk(newStart, newEnd))
-
-  // Prune from the other end if over max
-  if (chunks.value.length > MAX_CHUNKS) {
-    const container = scrollContainer.value
-    const prevHeight = container?.scrollHeight ?? 0
-
-    chunks.value.shift()
-
-    nextTick(() => {
-      requestAnimationFrame(() => {
-        if (container) {
-          const newHeight = container.scrollHeight
-          container.scrollTop += (newHeight - prevHeight)
-        }
-      })
-    })
-  }
-
-  nextTick(() => {
-    loadingNewer.value = false
-  })
+  bottomOffset.value += PAGE_SIZE
 }
 
 function setupObservers() {
   const container = scrollContainer.value
   if (!container) return
 
-  const options: IntersectionObserverInit = {
-    root: container,
-    rootMargin: '200px 0px',
-    threshold: 0,
-  }
-
-  topObserver = new IntersectionObserver((entries) => {
-    if (!initialized.value) return
-    for (const entry of entries) {
-      if (entry.isIntersecting) {
-        prependChunk()
+  topObserver = new IntersectionObserver(
+    (entries) => {
+      if (!initialized.value) return
+      for (const entry of entries) {
+        if (entry.isIntersecting) loadOlder()
       }
-    }
-  }, options)
+    },
+    { root: container, rootMargin: '400px 0px 0px 0px' }
+  )
 
-  bottomObserver = new IntersectionObserver((entries) => {
-    if (!initialized.value) return
-    for (const entry of entries) {
-      if (entry.isIntersecting) {
-        appendChunk()
+  bottomObserver = new IntersectionObserver(
+    (entries) => {
+      if (!initialized.value) return
+      for (const entry of entries) {
+        if (entry.isIntersecting) loadNewer()
       }
-    }
-  }, options)
+    },
+    { root: container, rootMargin: '0px 0px 400px 0px' }
+  )
 
   if (topSentinel.value) topObserver.observe(topSentinel.value)
   if (bottomSentinel.value) bottomObserver.observe(bottomSentinel.value)
 }
 
 function scrollToToday() {
-  // Check if today is within the loaded chunk range
-  const first = chunks.value[0]
-  const last = chunks.value[chunks.value.length - 1]
-
-  if (!first || !last || today < first.start || today > last.end) {
-    // Reset to initial chunks centered on today
-    chunks.value = buildInitialChunks()
-    nextTick(() => {
-      nextTick(() => {
-        doScrollToTodayEl()
-      })
-    })
-    return
+  // First scroll to today instantly (no animation since we're about to reset DOM)
+  if (todayEl.value) {
+    todayEl.value.scrollIntoView({ block: 'start' })
   }
 
-  doScrollToTodayEl()
-}
+  // Then reset offsets to trim the DOM
+  topOffset.value = -PAGE_SIZE
+  bottomOffset.value = PAGE_SIZE
 
-function doScrollToTodayEl() {
-  // Find the chunk component that contains today and get its todayRef
-  for (const [, comp] of chunkRefs) {
-    const el = comp?.todayRef
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      return
-    }
-  }
-  // If today has no todos, just scroll to approximate position
-  if (scrollContainer.value) {
-    scrollContainer.value.scrollTop = 0
-  }
-}
-
-onMounted(() => {
-  // Scroll to today after initial render
+  // After DOM settles from the trim, ensure we're still at today
   nextTick(() => {
     nextTick(() => {
-      doScrollToTodayEl()
+      if (todayEl.value) {
+        todayEl.value.scrollIntoView({ block: 'start' })
+      }
+    })
+  })
+}
 
-      // Enable observers after a delay to prevent immediate triggering
+function doScrollToToday() {
+  if (todayEl.value) {
+    todayEl.value.scrollIntoView({ block: 'start' })
+  }
+}
+
+// Re-subscribe when userId or date range changes
+watch(userId, () => subscribe(), { immediate: true })
+watch([startDate, endDate], () => subscribe())
+
+onMounted(() => {
+  // Scroll to today after initial data loads
+  const stop = watch(displayedDays, () => {
+    nextTick(() => {
+      if (todayEl.value) {
+        todayEl.value.scrollIntoView({ block: 'start' })
+      }
+      // Enable observers after initial scroll
       setTimeout(() => {
         initialized.value = true
         setupObservers()
       }, 300)
     })
+    stop()
   })
-
-  // Check for empty state after data loads
-  setTimeout(() => {
-    hasAnyContent.value = chunkRefs.size > 0
-  }, 1000)
 })
 
 onUnmounted(() => {
+  subscription?.unsubscribe()
   topObserver?.disconnect()
   bottomObserver?.disconnect()
 })
 
 function openAddForm(_event?: Event, date?: string) {
   editingTodo.value = null
-  selectedDate.value = date ?? today
+  selectedDate.value = date ?? todayStr
   showForm.value = true
 }
 
 function openEditForm(todo: Todo) {
   editingTodo.value = todo
-  selectedDate.value = todo.dueDate ?? today
+  selectedDate.value = todo.dueDate ?? todayStr
   showForm.value = true
 }
 
