@@ -1,11 +1,16 @@
 import type { Todo } from '#shared/types'
 import { db, generateId, now, today, getNextDay, isPastDate } from '~/utils/db'
 
+let _rolledOverThisSession = false
+
 /**
  * Process rollover for uncompleted todos
  * This should be called on app focus/load (foreground only)
  */
 export async function processRollover(userId: string): Promise<number> {
+  if (_rolledOverThisSession) return 0
+  _rolledOverThisSession = true
+
   const todayStr = today()
   let rolledOverCount = 0
 

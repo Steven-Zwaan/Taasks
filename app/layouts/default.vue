@@ -27,10 +27,8 @@ const { isAuthenticated } = useAuth()
 
 onMounted(async () => {
   if (isAuthenticated.value) {
-    // Process any pending rollovers
-    await doRollover()
-    // Initialize sync
-    await initialize()
+    // Process rollovers and initialize sync in parallel
+    await Promise.all([doRollover(), initialize()])
   }
 })
 

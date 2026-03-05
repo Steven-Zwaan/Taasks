@@ -9,12 +9,16 @@ export default defineNuxtRouteMiddleware(async (to) => {
 
   // Wait for auth to initialize
   if (isLoading.value) {
-    // Poll until auth is ready (max 5 seconds)
-    let attempts = 0
-    while (isLoading.value && attempts < 50) {
-      await new Promise(resolve => setTimeout(resolve, 100))
-      attempts++
-    }
+    await new Promise<void>((resolve) => {
+      const stop = watch(isLoading, (loading) => {
+        if (!loading) {
+          stop()
+          resolve()
+        }
+      }, { immediate: true })
+      // Safety timeout after 5 seconds
+      setTimeout(() => { stop(); resolve() }, 5000)
+    })
   }
 
   // Public routes that don't require auth
