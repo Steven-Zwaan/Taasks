@@ -78,6 +78,28 @@ export function getNextDay(dateString: string): string {
 }
 
 /**
+ * Get a date offset by N days
+ */
+export function addDays(dateString: string, days: number): string {
+  const date = new Date(dateString + 'T00:00:00')
+  date.setDate(date.getDate() + days)
+  return date.toISOString().split('T')[0]!
+}
+
+/**
+ * Generate all date strings between start and end (inclusive)
+ */
+export function generateDateRange(start: string, end: string): string[] {
+  const dates: string[] = []
+  let current = start
+  while (current <= end) {
+    dates.push(current)
+    current = getNextDay(current)
+  }
+  return dates
+}
+
+/**
  * Check if a date is in the past
  */
 export function isPastDate(dateString: string): boolean {

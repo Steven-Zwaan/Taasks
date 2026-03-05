@@ -240,15 +240,11 @@ export default defineNuxtConfig({
       periodicSyncForUpdates: 3600,
     },
     devOptions: {
-      enabled: true,
-      type: 'module',
+      enabled: false,
     },
   },
 
-  // CSS
-  css: ['~/assets/css/main.css'],
-
-  // Tailwind configuration
+  // Tailwind configuration (cssPath handles injecting the CSS file)
   tailwindcss: {
     cssPath: '~/assets/css/main.css',
     exposeConfig: false,

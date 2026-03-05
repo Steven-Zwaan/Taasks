@@ -33,6 +33,22 @@
         </div>
       </div>
 
+      <!-- Admin Section (admin only) -->
+      <div v-if="isAdmin" class="mt-6 px-4">
+        <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Administration</h2>
+        <div class="bg-white rounded-xl overflow-hidden border border-gray-200">
+          <NuxtLink to="/admin" class="w-full flex items-center justify-between p-4">
+            <div>
+              <p class="text-red-500 font-medium">Admin Panel</p>
+              <p class="text-sm text-gray-500">Notifications, diagnostics & tools</p>
+            </div>
+            <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+            </svg>
+          </NuxtLink>
+        </div>
+      </div>
+
       <!-- Notifications Section -->
       <div class="mt-6 px-4">
         <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Notifications</h2>
@@ -159,6 +175,8 @@
 <script setup lang="ts">
 import { db } from '~/utils/db'
 
+const ADMIN_USER_ID = 'google-oauth2|108099838475512595328'
+
 definePageMeta({
   layout: 'default',
   middleware: ['auth'],
@@ -167,6 +185,8 @@ definePageMeta({
 const { user, logout } = useAuth()
 const { clearLocalTodos } = useTodos()
 const { syncState, pendingCount, lastSyncAt, isOnline, fullSync } = useOfflineSync()
+
+const isAdmin = computed(() => user.value?.id === ADMIN_USER_ID)
 
 const notificationsEnabled = ref(false)
 const reminderTime = ref('09:00')

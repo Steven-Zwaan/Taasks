@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-white flex flex-col">
+  <div class="h-[100dvh] bg-white flex flex-col overflow-hidden">
     <!-- Sync Status Banner -->
     <SyncStatusBanner />
 
@@ -27,10 +27,8 @@ const { isAuthenticated } = useAuth()
 
 onMounted(async () => {
   if (isAuthenticated.value) {
-    // Process any pending rollovers
-    await doRollover()
-    // Initialize sync
-    await initialize()
+    // Process rollovers and initialize sync in parallel
+    await Promise.all([doRollover(), initialize()])
   }
 })
 

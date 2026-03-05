@@ -1,0 +1,1 @@
+CREATE INDEX "idx_todos_user_updated" ON "todos" USING btree ("user_id","updated_at");
