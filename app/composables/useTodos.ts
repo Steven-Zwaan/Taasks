@@ -1,7 +1,7 @@
 import { liveQuery } from 'dexie'
 import { from, type Observable as RxObservable } from 'rxjs'
 import type { Ref } from 'vue'
-import type { Todo, CreateTodoInput, UpdateTodoInput, TodoScope } from '#shared/types'
+import type { Todo, CreateTodoInput, UpdateTodoInput } from '#shared/types'
 import { db, generateId, now, today } from '~/utils/db'
 import { processRollover } from '~/utils/rollover'
 
@@ -18,11 +18,10 @@ export function useTodos() {
   const isProcessingRollover = ref(false)
 
   /**
-   * Create a live query observable for todos
+   * Create a live query observable for todos by date
    * Returns RxJS Observable for compatibility with @vueuse/rxjs
    */
   function createTodosQuery(
-    scope?: TodoScope,
     dueDate?: string
   ): RxObservable<Todo[]> {
     const dexieObservable = liveQuery(async () => {
@@ -32,11 +31,11 @@ export function useTodos() {
 
       const todos = await query.toArray()
 
-      // Filter by scope and date if provided
+      // Filter by date if provided
       return todos
         .filter(todo => {
           if (todo.syncStatus === 'deleted') return false
-          if (scope && todo.scope !== scope) return false
+          if (todo.scope !== 'day') return false
           if (dueDate && todo.dueDate !== dueDate) return false
           return true
         })
@@ -67,8 +66,7 @@ export function useTodos() {
           true  // include upper bound
         )
         .filter(todo =>
-          todo.syncStatus !== 'deleted' &&
-          todo.scope === 'day'
+          todo.syncStatus !== 'deleted'
         )
         .toArray()
 
@@ -90,47 +88,6 @@ export function useTodos() {
       return grouped
     })
 
-    return from(dexieObservable)
-  }
-
-  /**
-   * Get todos grouped by date (for calendar view) — loads ALL todos
-   * Returns RxJS Observable for compatibility with @vueuse/rxjs
-   */
-  function createGroupedTodosQuery(): RxObservable<Map<string, Todo[]>> {
-    const dexieObservable = liveQuery(async () => {
-      if (!userId.value) return new Map()
-
-      const todos = await db.todos
-        .where('userId')
-        .equals(userId.value)
-        .filter(todo => 
-          todo.syncStatus !== 'deleted' &&
-          todo.scope === 'day' &&
-          todo.dueDate !== undefined
-        )
-        .toArray()
-
-      // Group by date
-      const grouped = new Map<string, Todo[]>()
-      
-      for (const todo of todos) {
-        if (!todo.dueDate) continue
-        
-        const existing = grouped.get(todo.dueDate) ?? []
-        existing.push(todo)
-        grouped.set(todo.dueDate, existing)
-      }
-
-      // Sort todos within each group
-      for (const [date, dateTodos] of grouped) {
-        grouped.set(date, dateTodos.sort((a, b) => a.sortOrder - b.sortOrder))
-      }
-
-      return grouped
-    })
-    
-    // Convert Dexie Observable to RxJS Observable
     return from(dexieObservable)
   }
 
@@ -393,7 +350,6 @@ export function useTodos() {
     // Queries
     createTodosQuery,
     createDateRangeTodosQuery,
-    createGroupedTodosQuery,
     createGlobalTodosQuery,
     getTodo,
 

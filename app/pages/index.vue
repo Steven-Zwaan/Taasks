@@ -90,7 +90,7 @@ const formattedDate = computed(() => {
 })
 
 // Live query for today's todos
-const todosObservable = createTodosQuery('day', today)
+const todosObservable = createTodosQuery(today)
 const todos = useObservable(todosObservable, { initialValue: [] })
 
 // Filtered todos based on search

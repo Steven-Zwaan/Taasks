@@ -110,7 +110,7 @@ interface Todo {
   title: string
   completed: boolean
   completedAt?: string
-  scope: 'day' | 'week' | 'global'
+  scope: 'day' | 'global'
   dueDate?: string
   color: TodoColor
   rolloverRule: 'next-day' | 'next-week' | 'none'

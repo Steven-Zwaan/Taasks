@@ -9,7 +9,7 @@ export const todos = pgTable('todos', {
   title: text('title').notNull(),
   completed: boolean('completed').notNull().default(false),
   completedAt: text('completed_at'),
-  scope: text('scope').notNull().default('day'), // 'day' | 'week' | 'global'
+  scope: text('scope').notNull().default('day'), // 'day' | 'global'
   dueDate: text('due_date'),
   color: text('color').notNull().default('blue'),
   rolloverRule: text('rollover_rule').notNull().default('next-day'), // 'next-day' | 'next-week' | 'none'

@@ -41,7 +41,10 @@
     </header>
 
     <!-- Content -->
-    <div ref="scrollContainer" class="flex-1 overflow-y-auto scroll-smooth-ios overscroll-none pb-20" @scroll="onScroll">
+    <div ref="scrollContainer" class="flex-1 overflow-y-auto scroll-smooth-ios overscroll-none pb-20">
+      <!-- Top sentinel for loading older chunks -->
+      <div ref="topSentinel" class="h-1" />
+
       <!-- Loading older indicator -->
       <div v-if="loadingOlder" class="flex items-center justify-center py-3 text-gray-400">
         <svg class="w-5 h-5 animate-spin mr-2" fill="none" viewBox="0 0 24 24">
@@ -51,42 +54,24 @@
         <span class="text-sm">Loading earlier dates...</span>
       </div>
 
-      <!-- Empty state -->
-      <div v-if="allDates.length === 0" class="flex flex-col items-center justify-center h-full text-gray-400 px-8">
+      <!-- Chunks -->
+      <CalendarChunk
+        v-for="chunk in chunks"
+        :key="chunk.id"
+        :ref="el => setChunkRef(chunk.id, el)"
+        :start-date="chunk.start"
+        :end-date="chunk.end"
+        :search-query="searchQuery"
+        @edit="openEditForm"
+      />
+
+      <!-- Empty state (only shown when all chunks are loaded and truly empty) -->
+      <div v-if="chunks.length > 0 && !hasAnyContent" class="flex flex-col items-center justify-center py-20 text-gray-400 px-8">
         <svg class="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
         </svg>
         <p class="text-lg font-medium">No scheduled todos</p>
         <p class="text-sm mt-1">Tap + to schedule a todo</p>
-      </div>
-
-      <!-- Apple Calendar-style list view -->
-      <div v-else>
-        <template v-for="date in allDates" :key="date">
-          <!-- Date header -->
-          <div
-            :ref="el => { if (date === today) todayEl = el as HTMLElement }"
-            class="date-header"
-            :class="{ 'text-red-500': isToday(date) }"
-          >
-            {{ formatDateHeader(date) }}
-          </div>
-
-          <!-- Todos for this date -->
-          <template v-if="filteredGroupedTodos.has(date)">
-            <TodoItem
-              v-for="todo in filteredGroupedTodos.get(date)"
-              :key="todo.id"
-              :todo="todo"
-              @edit="openEditForm"
-            />
-          </template>
-
-          <!-- Empty date placeholder -->
-          <div v-else class="px-4 py-3 text-sm text-gray-300 italic">
-            No todos
-          </div>
-        </template>
       </div>
 
       <!-- Loading newer indicator -->
@@ -97,6 +82,9 @@
         </svg>
         <span class="text-sm">Loading more dates...</span>
       </div>
+
+      <!-- Bottom sentinel for loading newer chunks -->
+      <div ref="bottomSentinel" class="h-1" />
     </div>
 
     <!-- Add/Edit Form -->
@@ -111,22 +99,22 @@
 </template>
 
 <script setup lang="ts">
-import { liveQuery } from 'dexie'
-import type { Subscription } from 'rxjs'
 import type { Todo } from '#shared/types'
-import { db, today as getToday, formatDate, addDays, generateDateRange } from '~/utils/db'
+import { today as getToday, addDays } from '~/utils/db'
 
 definePageMeta({
   layout: 'default',
   middleware: ['auth'],
 })
 
-const PAGE_SIZE = 14
-const MAX_RANGE_DAYS = 180 // cap to prevent unbounded DOM growth
-const SCROLL_THRESHOLD = 200 // pixels from edge to trigger loading
+const CHUNK_DAYS = 7
+const MAX_CHUNKS = 8
 
-const { user } = useAuth()
-const userId = computed(() => user.value?.id ?? '')
+interface ChunkDescriptor {
+  id: string
+  start: string
+  end: string
+}
 
 const today = getToday()
 const showSearch = ref(false)
@@ -138,175 +126,192 @@ const loadingOlder = ref(false)
 const loadingNewer = ref(false)
 const initialized = ref(false)
 
-// Date range: start at today, future dates below, past dates loaded on scroll-up
-const rangeStart = ref(today)
-const rangeEnd = ref(addDays(today, PAGE_SIZE))
-
-// Refs for scroll management
+// Scroll container and sentinel refs
 const scrollContainer = ref<HTMLElement | null>(null)
-const todayEl = ref<HTMLElement | null>(null)
+const topSentinel = ref<HTMLElement | null>(null)
+const bottomSentinel = ref<HTMLElement | null>(null)
 
-// Reactive grouped todos — manually managed subscription so we can
-// re-subscribe when the date range changes (Dexie liveQuery doesn't
-// react to Vue ref changes, only to IndexedDB data changes).
-const groupedTodos = ref<Map<string, Todo[]>>(new Map())
-let todosSubscription: Subscription | null = null
+// Track chunk component refs to find today element
+const chunkRefs = new Map<string, any>()
 
-function subscribeTodos() {
-  todosSubscription?.unsubscribe()
-  const start = rangeStart.value
-  const end = rangeEnd.value
-  const uid = userId.value
-  if (!uid) return
-
-  const obs = liveQuery(async () => {
-    const todos = await db.todos
-      .where('[userId+dueDate]')
-      .between([uid, start], [uid, end], true, true)
-      .filter(todo => todo.syncStatus !== 'deleted' && todo.scope === 'day')
-      .toArray()
-
-    const grouped = new Map<string, Todo[]>()
-    for (const todo of todos) {
-      if (!todo.dueDate) continue
-      const existing = grouped.get(todo.dueDate) ?? []
-      existing.push(todo)
-      grouped.set(todo.dueDate, existing)
-    }
-    for (const [, dateTodos] of grouped) {
-      dateTodos.sort((a, b) => a.sortOrder - b.sortOrder)
-    }
-    return grouped
-  })
-
-  todosSubscription = obs.subscribe({
-    next: (val) => { groupedTodos.value = val },
-    error: (err) => { console.error('Calendar query error:', err) },
-  })
+function setChunkRef(id: string, el: any) {
+  if (el) chunkRefs.set(id, el)
+  else chunkRefs.delete(id)
 }
 
-// Re-subscribe whenever range or user changes
-watch([rangeStart, rangeEnd, userId], () => subscribeTodos(), { immediate: true })
-onUnmounted(() => todosSubscription?.unsubscribe())
+// For the empty state — check if any chunk has content
+// This is a simple heuristic: we show the empty state only briefly on initial load
+const hasAnyContent = ref(true)
 
-// Generate all dates in the visible range
-const allDates = computed(() => {
-  return generateDateRange(rangeStart.value, rangeEnd.value)
-})
+function createChunk(start: string, end: string): ChunkDescriptor {
+  return { id: `${start}_${end}`, start, end }
+}
 
-// Filter todos by search query
-const filteredGroupedTodos = computed(() => {
-  const query = searchQuery.value.trim().toLowerCase()
-  const filtered = new Map<string, Todo[]>()
+function buildInitialChunks(): ChunkDescriptor[] {
+  return [
+    createChunk(addDays(today, -CHUNK_DAYS), addDays(today, -1)),
+    createChunk(today, addDays(today, CHUNK_DAYS - 1)),
+    createChunk(addDays(today, CHUNK_DAYS), addDays(today, CHUNK_DAYS * 2 - 1)),
+  ]
+}
 
-  for (const date of allDates.value) {
-    const todos = groupedTodos.value.get(date)
-    if (!todos || todos.length === 0) continue
+const chunks = ref<ChunkDescriptor[]>(buildInitialChunks())
 
-    if (query) {
-      const matchingTodos = todos.filter((todo: Todo) =>
-        todo.title.toLowerCase().includes(query)
-      )
-      if (matchingTodos.length > 0) {
-        filtered.set(date, matchingTodos)
+// IntersectionObserver for infinite scroll
+let topObserver: IntersectionObserver | null = null
+let bottomObserver: IntersectionObserver | null = null
+
+function prependChunk() {
+  if (loadingOlder.value) return
+  loadingOlder.value = true
+
+  const first = chunks.value[0]!
+  const newEnd = addDays(first.start, -1)
+  const newStart = addDays(newEnd, -(CHUNK_DAYS - 1))
+
+  const container = scrollContainer.value
+  const prevHeight = container?.scrollHeight ?? 0
+
+  chunks.value.unshift(createChunk(newStart, newEnd))
+
+  // Prune from the other end if over max
+  if (chunks.value.length > MAX_CHUNKS) {
+    chunks.value.pop()
+  }
+
+  // Restore scroll position after prepending
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      if (container) {
+        const newHeight = container.scrollHeight
+        container.scrollTop += (newHeight - prevHeight)
       }
-    } else {
-      filtered.set(date, todos)
-    }
-  }
-
-  return filtered
-})
-
-function isToday(date: string): boolean {
-  return date === today
-}
-
-function formatDateHeader(date: string): string {
-  return formatDate(date)
-}
-
-function scrollToToday() {
-  // If today is outside the current range, reset to initial view
-  if (today < rangeStart.value || today > rangeEnd.value) {
-    rangeStart.value = today
-    rangeEnd.value = addDays(today, PAGE_SIZE)
-    nextTick(() => {
-      if (scrollContainer.value) scrollContainer.value.scrollTop = 0
+      loadingOlder.value = false
     })
-    return
-  }
-  if (todayEl.value) {
-    todayEl.value.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
+  })
 }
 
-// Scroll event handler
-function onScroll() {
-  if (!initialized.value) return
+function appendChunk() {
+  if (loadingNewer.value) return
+  loadingNewer.value = true
+
+  const last = chunks.value[chunks.value.length - 1]!
+  const newStart = addDays(last.end, 1)
+  const newEnd = addDays(newStart, CHUNK_DAYS - 1)
+
+  chunks.value.push(createChunk(newStart, newEnd))
+
+  // Prune from the other end if over max
+  if (chunks.value.length > MAX_CHUNKS) {
+    const container = scrollContainer.value
+    const prevHeight = container?.scrollHeight ?? 0
+
+    chunks.value.shift()
+
+    nextTick(() => {
+      requestAnimationFrame(() => {
+        if (container) {
+          const newHeight = container.scrollHeight
+          container.scrollTop += (newHeight - prevHeight)
+        }
+      })
+    })
+  }
+
+  nextTick(() => {
+    loadingNewer.value = false
+  })
+}
+
+function setupObservers() {
   const container = scrollContainer.value
   if (!container) return
 
-  // Near the top → load older dates
-  if (container.scrollTop < SCROLL_THRESHOLD && !loadingOlder.value) {
-    loadOlderDates()
+  const options: IntersectionObserverInit = {
+    root: container,
+    rootMargin: '200px 0px',
+    threshold: 0,
   }
 
-  // Near the bottom → load newer dates
-  const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-  if (distanceFromBottom < SCROLL_THRESHOLD && !loadingNewer.value) {
-    loadNewerDates()
+  topObserver = new IntersectionObserver((entries) => {
+    if (!initialized.value) return
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        prependChunk()
+      }
+    }
+  }, options)
+
+  bottomObserver = new IntersectionObserver((entries) => {
+    if (!initialized.value) return
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        appendChunk()
+      }
+    }
+  }, options)
+
+  if (topSentinel.value) topObserver.observe(topSentinel.value)
+  if (bottomSentinel.value) bottomObserver.observe(bottomSentinel.value)
+}
+
+function scrollToToday() {
+  // Check if today is within the loaded chunk range
+  const first = chunks.value[0]
+  const last = chunks.value[chunks.value.length - 1]
+
+  if (!first || !last || today < first.start || today > last.end) {
+    // Reset to initial chunks centered on today
+    chunks.value = buildInitialChunks()
+    nextTick(() => {
+      nextTick(() => {
+        doScrollToTodayEl()
+      })
+    })
+    return
   }
+
+  doScrollToTodayEl()
 }
 
-// Calculate days between two date strings
-function daysBetween(a: string, b: string): number {
-  const msPerDay = 86400000
-  return Math.round(
-    (new Date(b + 'T00:00:00').getTime() - new Date(a + 'T00:00:00').getTime()) / msPerDay
-  )
-}
-
-async function loadOlderDates() {
-  // Cap: don't go more than MAX_RANGE_DAYS before today
-  if (daysBetween(rangeStart.value, today) >= MAX_RANGE_DAYS) return
-
-  loadingOlder.value = true
-
-  const container = scrollContainer.value
-  const previousHeight = container?.scrollHeight ?? 0
-
-  rangeStart.value = addDays(rangeStart.value, -PAGE_SIZE)
-
-  await nextTick()
-  await nextTick()
-
-  // Restore scroll position so content doesn't jump when prepending dates
-  if (container) {
-    const newHeight = container.scrollHeight
-    container.scrollTop += (newHeight - previousHeight)
+function doScrollToTodayEl() {
+  // Find the chunk component that contains today and get its todayRef
+  for (const [, comp] of chunkRefs) {
+    const el = comp?.todayRef
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      return
+    }
   }
-
-  setTimeout(() => { loadingOlder.value = false }, 500)
-}
-
-async function loadNewerDates() {
-  // Cap: don't go more than MAX_RANGE_DAYS after today
-  if (daysBetween(today, rangeEnd.value) >= MAX_RANGE_DAYS) return
-
-  loadingNewer.value = true
-  rangeEnd.value = addDays(rangeEnd.value, PAGE_SIZE)
-  await nextTick()
-  setTimeout(() => { loadingNewer.value = false }, 500)
+  // If today has no todos, just scroll to approximate position
+  if (scrollContainer.value) {
+    scrollContainer.value.scrollTop = 0
+  }
 }
 
 onMounted(() => {
-  // Today is already at the top (rangeStart = today), so no scrollIntoView needed.
-  // Just delay enabling pagination so the initial render at scrollTop=0 doesn't
-  // immediately trigger loadOlderDates.
+  // Scroll to today after initial render
   nextTick(() => {
-    setTimeout(() => { initialized.value = true }, 500)
+    nextTick(() => {
+      doScrollToTodayEl()
+
+      // Enable observers after a delay to prevent immediate triggering
+      setTimeout(() => {
+        initialized.value = true
+        setupObservers()
+      }, 300)
+    })
   })
+
+  // Check for empty state after data loads
+  setTimeout(() => {
+    hasAnyContent.value = chunkRefs.size > 0
+  }, 1000)
+})
+
+onUnmounted(() => {
+  topObserver?.disconnect()
+  bottomObserver?.disconnect()
 })
 
 function openAddForm(_event?: Event, date?: string) {

@@ -1,7 +1,7 @@
 /**
  * Todo scope determines where the todo appears
  */
-export type TodoScope = 'day' | 'week' | 'global'
+export type TodoScope = 'day' | 'global'
 
 /**
  * Sync status for offline-first operations
@@ -30,9 +30,9 @@ export interface Todo {
   completed: boolean
   /** When the todo was completed (ISO string) */
   completedAt?: string
-  /** Todo scope: day, week, or global */
+  /** Todo scope: day or global */
   scope: TodoScope
-  /** Due date for day/week scoped todos (ISO date string YYYY-MM-DD) */
+  /** Due date for day scoped todos (ISO date string YYYY-MM-DD) */
   dueDate?: string
   /** Visual color indicator */
   color: TodoColor
