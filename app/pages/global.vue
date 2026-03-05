@@ -31,7 +31,7 @@
     </header>
 
     <!-- Content -->
-    <div class="flex-1 overflow-y-auto scroll-smooth-ios overscroll-none pb-20">
+    <div class="flex-1 overflow-y-auto scroll-smooth-ios overscroll-none">
       <!-- Empty state -->
       <div v-if="filteredTodos.length === 0" class="flex flex-col items-center justify-center h-full text-gray-400 px-8">
         <svg class="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

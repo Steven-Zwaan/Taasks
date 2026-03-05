@@ -34,7 +34,7 @@
     </header>
 
     <!-- Content -->
-    <div class="flex-1 overflow-y-auto scroll-smooth-ios overscroll-none pb-20">
+    <div class="flex-1 overflow-y-auto scroll-smooth-ios overscroll-none">
       <!-- Empty state -->
       <div v-if="filteredTodos.length === 0" class="mt-60">
         <EmptyState />

@@ -17,7 +17,7 @@
     </header>
 
     <!-- Content -->
-    <div class="flex-1 overflow-y-auto scroll-smooth-ios overscroll-none pb-20">
+    <div class="flex-1 overflow-y-auto scroll-smooth-ios overscroll-none">
       <!-- Notifications Section -->
       <div class="mt-6 px-4">
         <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Notification Testing</h2>

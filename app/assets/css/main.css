@@ -23,7 +23,6 @@
   body {
     @apply bg-white text-gray-900 antialiased;
     /* Top padding handled by page headers via pt-safe to avoid double padding in standalone PWA */
-    padding-bottom: var(--safe-area-bottom);
     padding-left: var(--safe-area-left);
     padding-right: var(--safe-area-right);
     overscroll-behavior: none;
@@ -69,7 +68,7 @@
 
   /* Bottom navigation */
   .bottom-nav {
-    @apply fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-sm border-t border-gray-200 flex justify-around items-center z-30;
+    @apply bg-white/95 backdrop-blur-sm border-t border-gray-200 flex justify-around items-center z-30 flex-shrink-0;
     padding-bottom: max(12px, var(--safe-area-bottom));
     padding-top: 8px;
   }

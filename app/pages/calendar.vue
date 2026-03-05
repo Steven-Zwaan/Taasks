@@ -41,7 +41,7 @@
     </header>
 
     <!-- Scroll container -->
-    <div ref="scrollContainer" class="flex-1 overflow-y-auto overscroll-none pb-20">
+    <div ref="scrollContainer" class="flex-1 overflow-y-auto overscroll-none">
       <!-- Top sentinel -->
       <div ref="topSentinel" class="h-1" />
 
